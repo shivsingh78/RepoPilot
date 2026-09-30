@@ -1,0 +1,121 @@
+# RepoPilot local/single-host deployment (docs/ARCHITECTURE.md §15).
+#   pnpm compose:infra   -> postgres + redis only (run apps on the host with pnpm dev:*)
+#   pnpm compose:full    -> everything in containers
+name: repopilot
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: repopilot
+      POSTGRES_PASSWORD: repopilot
+      POSTGRES_DB: repopilot
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U repopilot -d repopilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: infra/docker/node.Dockerfile
+      args:
+        APP_FILTER: "@repopilot/api"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgres://repopilot:repopilot@postgres:5432/repopilot
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGIN: http://localhost:3000
+      API_KEYS: ${API_KEYS:-}
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: infra/docker/node.Dockerfile
+      args:
+        APP_FILTER: "@repopilot/worker"
+    environment:
+      NODE_ENV: production
+      WORKER_HEALTH_PORT: 4001
+      DATABASE_URL: postgres://repopilot:repopilot@postgres:5432/repopilot
+      REDIS_URL: redis://redis:6379
+      WORKSPACE_ROOT: /workspaces
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5-5}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    ports:
+      - "4001:4001"
+    volumes:
+      - workspaces:/workspaces
+      # Day 2: the sandbox runner needs the Docker Engine. Enable deliberately; this makes the
+      # worker root-equivalent on the host (docs/SECURITY.md §3, docs/ARCHITECTURE.md §15).
+      # - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  migrate:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: infra/docker/node.Dockerfile
+      args:
+        APP_FILTER: "@repopilot/shared"
+    command: ["pnpm", "--filter", "@repopilot/shared", "migrate"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://repopilot:repopilot@postgres:5432/repopilot
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  web:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    environment:
+      NODE_ENV: production
+      API_BASE_URL: http://api:4000
+      API_KEY: ${API_KEY:-}
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  workspaces:

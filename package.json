@@ -1,0 +1,32 @@
+{
+  "name": "repopilot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AI-powered GitHub repository analysis and repair platform",
+  "type": "module",
+  "packageManager": "pnpm@12.6.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev:api": "pnpm --filter @repopilot/api dev",
+    "dev:worker": "pnpm --filter @repopilot/worker dev",
+    "dev:web": "pnpm --filter @repopilot/web dev",
+    "start:api": "pnpm --filter @repopilot/api start",
+    "start:worker": "pnpm --filter @repopilot/worker start",
+    "typecheck": "pnpm -r --no-bail run typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:integration": "RUN_INTEGRATION=1 vitest run",
+    "db:migrate": "pnpm --filter @repopilot/shared migrate",
+    "compose:infra": "docker compose up -d postgres redis",
+    "compose:full": "docker compose --profile full up -d --build"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.3",
+    "eslint": "10.11.0",
+    "globals": "17.12.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.0",
+    "vitest": "5.0.3"
+  }
+}
